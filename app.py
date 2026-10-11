@@ -179,4 +179,17 @@ with tab4:
     cap = st.number_input("Total Capital (₹):", value=100000.0, key="tab4_capital")
     risk_pct = st.number_input("Max Risk (%):", value=2.0, key="tab4_risk")
     entry_p = st.number_input("Entry Price (₹):", value=2500.0, key="tab4_entry")
-    sl_p = st.number_input("Stop Loss Price (₹):", value=2450.0, key="tab4_sl
+    sl_p = st.number_input("Stop Loss Price (₹):", value=2450.0, key="tab4_sl")
+    tgt_p = st.number_input("Target Price (₹):", value=2625.0, key="tab4_target")
+    
+    if st.button("Calculate Position", key="tab4_calc_button"):
+        risk_per_sh = entry_p - sl_p
+        if risk_per_sh <= 0:
+            st.error("Entry price must be higher than Stop Loss.")
+        else:
+            max_risk_val = cap * (risk_pct / 100.0)
+            shares = int(min(max_risk_val // risk_per_sh, cap // entry_p))
+            st.success(f"**Buy Quantity:** {shares} Shares")
+            st.write(f"**Total Capital Needed:** ₹{round(shares * entry_p, 2)}")
+            st.write(f"**Max Loss:** ₹{round(shares * risk_per_sh, 2)}")
+            st.write(f"**Max Gain:** ₹{round(shares * (tgt_p - entry_p), 2)}")
