@@ -190,3 +190,47 @@ with tab4:
             st.write(f"**Total Capital Needed:** ₹{round(shares * entry_p, 2)}")
             st.write(f"**Max Loss:** ₹{round(shares * risk_per_sh, 2)}")
             st.write(f"**Max Gain:** ₹{round(shares * (tgt_p - entry_p), 2)}")
+# ==============================================================================
+# TAB 1: LIVE STOCK ANALYSIS (With Interactive Price Charting)
+# ==============================================================================
+with tab1:
+    st.subheader("Single Stock Multi-Factor Analysis")
+    symbol = st.text_input("Enter NSE Symbol:", value="RELIANCE", key="t1_s").upper()
+    if st.button("Analyze Stock", key="t1_b"):
+        with st.spinner("Fetching data..."):
+            try:
+                ticker = yf.Ticker(f"{symbol}.NS")
+                df = ticker.history(period="60d")
+                if df.empty:
+                    st.error("No data found for symbol.")
+                else:
+                    info = ticker.info if hasattr(ticker, 'info') else {}
+                    company = info.get('shortName', symbol)
+                    pe_ratio = info.get('trailingPE', 'N/A')
+                    
+                    # Technical Indicator Calculations
+                    df['SMA_20'] = calculate_sma(df['Close'], window=20)
+                    df['RSI_14'] = calculate_rsi(df['Close'], window=14)
+                    
+                    latest = df.iloc[-1]
+                    price, rsi, sma = float(latest['Close']), float(latest['RSI_14']), float(latest['SMA_20'])
+                    sentiment = fetch_news_sentiment(company)
+                    
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Current Price", f"₹{round(price, 2)}")
+                    c2.metric("RSI (14)", round(rsi, 2))
+                    c3.metric("20-Day SMA", f"₹{round(sma, 2)}")
+                    c4.metric("P/E Ratio", pe_ratio)
+                    
+                    st.success(f"Target Price (+5%): ₹{round(price * 1.05, 2)} | Stop Loss (-2%): ₹{round(price * 0.98, 2)}")
+                    
+                    # NEW: Interactive Price vs 20-Day SMA Chart
+                    st.markdown("#### **Price Trend vs 20-Day SMA**")
+                    chart_data = df[['Close', 'SMA_20']].dropna()
+                    st.line_chart(chart_data)
+
+                    st.write(f"**News Sentiment:** {sentiment['label']} ({sentiment['score']})")
+                    for h in sentiment['headlines']:
+                        st.write(f"- {h}")
+            except Exception as e:
+                st.error(f"Error: {e}")
