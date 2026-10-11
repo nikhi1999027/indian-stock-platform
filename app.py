@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import feedparser
 import urllib.parse
 from textblob import TextBlob
@@ -10,7 +9,25 @@ from datetime import datetime
 # Streamlit Page Configuration
 st.set_page_config(page_title="Indian Stock Platform", page_icon="📈", layout="wide")
 
-# Helper Function: Google News Sentiment
+# ==============================================================================
+# PURE-PANDAS TECHNICAL INDICATOR CALCULATORS
+# (Replaces pandas-ta to eliminate C/C++ compiler build errors)
+# ==============================================================================
+def calculate_sma(series, window=20):
+    """Calculates Simple Moving Average using pure pandas rolling window."""
+    return series.rolling(window=window).mean()
+
+def calculate_rsi(series, window=14):
+    """Calculates Relative Strength Index using pure pandas Exponential Moving Average."""
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
 def fetch_news_sentiment(company_name):
     encoded_query = urllib.parse.quote(f"{company_name} share stock news India")
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
@@ -21,13 +38,23 @@ def fetch_news_sentiment(company_name):
     headlines = [entry.title for entry in feed.entries[:3]]
     return {"label": label, "score": round(avg_polarity, 2), "headlines": headlines}
 
+def fetch_nifty_500_tickers():
+    url = "https://raw.githubusercontent.com/kprohith/nse-stock-analysis/master/ind_nifty500list.csv"
+    try:
+        df = pd.read_csv(url)
+        return [str(s).strip().upper() for s in df['Symbol'].dropna().unique().tolist()][:100]
+    except Exception:
+        return ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "BHARTIARTL", "SBIN", "TATAMOTORS", "LT", "ITC"]
+
 # Main Application Title
 st.title("📈 Private Indian Stock Analysis Platform")
 
 # 4 Core Navigation Tabs
 tab1, tab2, tab3, tab4 = st.tabs(["1. Live Stock Analysis", "2. Market Scanner", "3. Strategy Backtest", "4. Position Sizer"])
 
-# TAB 1: LIVE ANALYSIS
+# ==============================================================================
+# TAB 1: LIVE STOCK ANALYSIS
+# ==============================================================================
 with tab1:
     st.subheader("Single Stock Multi-Factor Analysis")
     symbol = st.text_input("Enter NSE Symbol:", value="RELIANCE", key="t1_s").upper()
@@ -43,8 +70,9 @@ with tab1:
                     company = info.get('shortName', symbol)
                     pe_ratio = info.get('trailingPE', 'N/A')
                     
-                    df['SMA_20'] = ta.sma(df['Close'], length=20)
-                    df['RSI_14'] = ta.rsi(df['Close'], length=14)
+                    # Calculate Indicators with pure pandas
+                    df['SMA_20'] = calculate_sma(df['Close'], window=20)
+                    df['RSI_14'] = calculate_rsi(df['Close'], window=14)
                     
                     latest = df.iloc[-1]
                     price, rsi, sma = float(latest['Close']), float(latest['RSI_14']), float(latest['SMA_20'])
@@ -63,12 +91,14 @@ with tab1:
             except Exception as e:
                 st.error(f"Error: {e}")
 
+# ==============================================================================
 # TAB 2: MARKET SCANNER
+# ==============================================================================
 with tab2:
     st.subheader("Nifty Volume Spike Scanner")
     if st.button("Scan Market", key="t2_b"):
         with st.spinner("Scanning top NSE stocks..."):
-            sample_watchlist = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "BHARTIARTL", "SBIN", "TATAMOTORS", "LT", "ITC"]
+            sample_watchlist = fetch_nifty_500_tickers()
             yf_symbols = [f"{s}.NS" for s in sample_watchlist]
             data = yf.download(yf_symbols, period="60d", group_by='ticker', progress=False)
             
@@ -78,15 +108,19 @@ with tab2:
                 if t_ns in data and not data[t_ns].empty:
                     d = data[t_ns].dropna(subset=['Close', 'Volume'])
                     if len(d) >= 20:
-                        d['SMA_20'] = ta.sma(d['Close'], length=20)
-                        d['RSI_14'] = ta.rsi(d['Close'], length=14)
-                        d['Vol_SMA_20'] = ta.sma(d['Volume'], length=20)
+                        d['SMA_20'] = calculate_sma(d['Close'], window=20)
+                        d['RSI_14'] = calculate_rsi(d['Close'], window=14)
+                        d['Vol_SMA_20'] = calculate_sma(d['Volume'], window=20)
+                        
                         lat = d.iloc[-1]
                         vol_r = round(float(lat['Volume']) / float(lat['Vol_SMA_20']), 2) if float(lat['Vol_SMA_20']) > 0 else 1.0
-                        if vol_r >= 1.0:
+                        
+                        if vol_r >= 1.0 and float(lat['RSI_14']) < 55:
                             candidates.append({
-                                "Symbol": s, "Price (₹)": round(float(lat['Close']), 2),
-                                "RSI": round(float(lat['RSI_14']), 2), "Volume Spike": f"{vol_r}x Avg",
+                                "Symbol": s, 
+                                "Price (₹)": round(float(lat['Close']), 2),
+                                "RSI": round(float(lat['RSI_14']), 2), 
+                                "Volume Spike": f"{vol_r}x Avg",
                                 "Target (₹)": round(float(lat['Close']) * 1.05, 2),
                                 "Stop Loss (₹)": round(float(lat['Close']) * 0.98, 2)
                             })
@@ -96,7 +130,9 @@ with tab2:
             else:
                 st.info("No volume spike opportunities found.")
 
+# ==============================================================================
 # TAB 3: BACKTESTER
+# ==============================================================================
 with tab3:
     st.subheader("1-Year Strategy Backtest")
     bt_sym = st.text_input("NSE Symbol for Backtest:", value="TCS", key="t3_s").upper()
@@ -105,8 +141,9 @@ with tab3:
             df = yf.download(f"{bt_sym}.NS", period="1y", interval="1d", progress=False)
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
-            df['SMA_20'] = ta.sma(df['Close'], length=20)
-            df['RSI_14'] = ta.rsi(df['Close'], length=14)
+                
+            df['SMA_20'] = calculate_sma(df['Close'], window=20)
+            df['RSI_14'] = calculate_rsi(df['Close'], window=14)
             df.dropna(inplace=True)
             
             cash, pos, entry_p, trades = 100000.0, 0, 0.0, []
@@ -131,7 +168,9 @@ with tab3:
             c2.metric("Total Return", f"{ret_p}%")
             c3.metric("Win Rate", f"{win_r}%")
 
+# ==============================================================================
 # TAB 4: POSITION SIZER
+# ==============================================================================
 with tab4:
     st.subheader("Position Size Calculator")
     cap = st.number_input("Total Capital (₹):", value=100000.0)
