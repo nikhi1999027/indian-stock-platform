@@ -11,7 +11,6 @@ st.set_page_config(page_title="Indian Stock Platform", page_icon="📈", layout=
 
 # ==============================================================================
 # PURE-PANDAS TECHNICAL INDICATOR CALCULATORS
-# (Replaces pandas-ta to eliminate C/C++ compiler build errors)
 # ==============================================================================
 def calculate_sma(series, window=20):
     """Calculates Simple Moving Average using pure pandas rolling window."""
@@ -57,8 +56,8 @@ tab1, tab2, tab3, tab4 = st.tabs(["1. Live Stock Analysis", "2. Market Scanner",
 # ==============================================================================
 with tab1:
     st.subheader("Single Stock Multi-Factor Analysis")
-    symbol = st.text_input("Enter NSE Symbol:", value="RELIANCE", key="t1_s").upper()
-    if st.button("Analyze Stock", key="t1_b"):
+    symbol = st.text_input("Enter NSE Symbol:", value="RELIANCE", key="tab1_symbol_input").upper()
+    if st.button("Analyze Stock", key="tab1_analyze_button"):
         with st.spinner("Fetching data..."):
             try:
                 ticker = yf.Ticker(f"{symbol}.NS")
@@ -70,7 +69,6 @@ with tab1:
                     company = info.get('shortName', symbol)
                     pe_ratio = info.get('trailingPE', 'N/A')
                     
-                    # Calculate Indicators with pure pandas
                     df['SMA_20'] = calculate_sma(df['Close'], window=20)
                     df['RSI_14'] = calculate_rsi(df['Close'], window=14)
                     
@@ -85,6 +83,11 @@ with tab1:
                     c4.metric("P/E Ratio", pe_ratio)
                     
                     st.success(f"Target Price (+5%): ₹{round(price * 1.05, 2)} | Stop Loss (-2%): ₹{round(price * 0.98, 2)}")
+                    
+                    # Interactive Price & SMA Chart
+                    chart_data = df[['Close', 'SMA_20']].dropna()
+                    st.line_chart(chart_data)
+
                     st.write(f"**News Sentiment:** {sentiment['label']} ({sentiment['score']})")
                     for h in sentiment['headlines']:
                         st.write(f"- {h}")
@@ -96,7 +99,7 @@ with tab1:
 # ==============================================================================
 with tab2:
     st.subheader("Nifty Volume Spike Scanner")
-    if st.button("Scan Market", key="t2_b"):
+    if st.button("Scan Market", key="tab2_scan_button"):
         with st.spinner("Scanning top NSE stocks..."):
             sample_watchlist = fetch_nifty_500_tickers()
             yf_symbols = [f"{s}.NS" for s in sample_watchlist]
@@ -135,8 +138,8 @@ with tab2:
 # ==============================================================================
 with tab3:
     st.subheader("1-Year Strategy Backtest")
-    bt_sym = st.text_input("NSE Symbol for Backtest:", value="TCS", key="t3_s").upper()
-    if st.button("Run Backtest", key="t3_b"):
+    bt_sym = st.text_input("NSE Symbol for Backtest:", value="TCS", key="tab3_symbol_input").upper()
+    if st.button("Run Backtest", key="tab3_backtest_button"):
         with st.spinner("Calculating performance..."):
             df = yf.download(f"{bt_sym}.NS", period="1y", interval="1d", progress=False)
             if isinstance(df.columns, pd.MultiIndex):
@@ -173,64 +176,7 @@ with tab3:
 # ==============================================================================
 with tab4:
     st.subheader("Position Size Calculator")
-    cap = st.number_input("Total Capital (₹):", value=100000.0)
-    risk_pct = st.number_input("Max Risk (%):", value=2.0)
-    entry_p = st.number_input("Entry Price (₹):", value=2500.0)
-    sl_p = st.number_input("Stop Loss Price (₹):", value=2450.0)
-    tgt_p = st.number_input("Target Price (₹):", value=2625.0)
-    
-    if st.button("Calculate Position", key="t4_b"):
-        risk_per_sh = entry_p - sl_p
-        if risk_per_sh <= 0:
-            st.error("Entry price must be higher than Stop Loss.")
-        else:
-            max_risk_val = cap * (risk_pct / 100.0)
-            shares = int(min(max_risk_val // risk_per_sh, cap // entry_p))
-            st.success(f"**Buy Quantity:** {shares} Shares")
-            st.write(f"**Total Capital Needed:** ₹{round(shares * entry_p, 2)}")
-            st.write(f"**Max Loss:** ₹{round(shares * risk_per_sh, 2)}")
-            st.write(f"**Max Gain:** ₹{round(shares * (tgt_p - entry_p), 2)}")
-# ==============================================================================
-# TAB 1: LIVE STOCK ANALYSIS (With Interactive Price Charting)
-# ==============================================================================
-with tab1:
-    st.subheader("Single Stock Multi-Factor Analysis")
-    symbol = st.text_input("Enter NSE Symbol:", value="RELIANCE", key="t1_s").upper()
-    if st.button("Analyze Stock", key="t1_b"):
-        with st.spinner("Fetching data..."):
-            try:
-                ticker = yf.Ticker(f"{symbol}.NS")
-                df = ticker.history(period="60d")
-                if df.empty:
-                    st.error("No data found for symbol.")
-                else:
-                    info = ticker.info if hasattr(ticker, 'info') else {}
-                    company = info.get('shortName', symbol)
-                    pe_ratio = info.get('trailingPE', 'N/A')
-                    
-                    # Technical Indicator Calculations
-                    df['SMA_20'] = calculate_sma(df['Close'], window=20)
-                    df['RSI_14'] = calculate_rsi(df['Close'], window=14)
-                    
-                    latest = df.iloc[-1]
-                    price, rsi, sma = float(latest['Close']), float(latest['RSI_14']), float(latest['SMA_20'])
-                    sentiment = fetch_news_sentiment(company)
-                    
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Current Price", f"₹{round(price, 2)}")
-                    c2.metric("RSI (14)", round(rsi, 2))
-                    c3.metric("20-Day SMA", f"₹{round(sma, 2)}")
-                    c4.metric("P/E Ratio", pe_ratio)
-                    
-                    st.success(f"Target Price (+5%): ₹{round(price * 1.05, 2)} | Stop Loss (-2%): ₹{round(price * 0.98, 2)}")
-                    
-                    # NEW: Interactive Price vs 20-Day SMA Chart
-                    st.markdown("#### **Price Trend vs 20-Day SMA**")
-                    chart_data = df[['Close', 'SMA_20']].dropna()
-                    st.line_chart(chart_data)
-
-                    st.write(f"**News Sentiment:** {sentiment['label']} ({sentiment['score']})")
-                    for h in sentiment['headlines']:
-                        st.write(f"- {h}")
-            except Exception as e:
-                st.error(f"Error: {e}")
+    cap = st.number_input("Total Capital (₹):", value=100000.0, key="tab4_capital")
+    risk_pct = st.number_input("Max Risk (%):", value=2.0, key="tab4_risk")
+    entry_p = st.number_input("Entry Price (₹):", value=2500.0, key="tab4_entry")
+    sl_p = st.number_input("Stop Loss Price (₹):", value=2450.0, key="tab4_sl
