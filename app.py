@@ -12,20 +12,18 @@ import requests
 st.set_page_config(page_title="Institutional Stock & Options Platform", page_icon="⚡", layout="wide")
 
 OPTIONS_FILE = "options_active_trades.csv"
+EQUITY_PORTFOLIO_FILE = "active_trades.csv"
 
 # ==============================================================================
 # 1. PURE-PANDAS TECHNICAL INDICATOR ENGINE
 # ==============================================================================
 def calculate_sma(series, window=20):
-    """Calculates Simple Moving Average."""
     return series.rolling(window=window).mean()
 
 def calculate_ema(series, span=20):
-    """Calculates Exponential Moving Average."""
     return series.ewm(span=span, adjust=False).mean()
 
 def calculate_rsi(series, window=14):
-    """Calculates Relative Strength Index."""
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
@@ -33,7 +31,6 @@ def calculate_rsi(series, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_macd(series, fast=12, slow=26, signal=9):
-    """Calculates MACD Line, Signal Line, and Histogram."""
     fast_ema = series.ewm(span=fast, adjust=False).mean()
     slow_ema = series.ewm(span=slow, adjust=False).mean()
     macd_line = fast_ema - slow_ema
@@ -42,7 +39,6 @@ def calculate_macd(series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 def calculate_bollinger_bands(series, window=20, num_std=2):
-    """Calculates Bollinger Bands."""
     sma = series.rolling(window=window).mean()
     std = series.rolling(window=window).std()
     upper = sma + (std * num_std)
@@ -50,10 +46,22 @@ def calculate_bollinger_bands(series, window=20, num_std=2):
     return upper, sma, lower
 
 # ==============================================================================
-# 2. FII / DII INSTITUTIONAL SENTIMENT FETCHER
+# 2. MARKET DATA & INSTITUTIONAL FLOWS
 # ==============================================================================
+def fetch_nifty_500_tickers():
+    """Fetches liquid NSE tickers."""
+    url = "https://raw.githubusercontent.com/kprohith/nse-stock-analysis/master/ind_nifty500list.csv"
+    try:
+        df = pd.read_csv(url)
+        return [str(s).strip().upper() for s in df['Symbol'].dropna().unique().tolist()][:100]
+    except Exception:
+        return [
+            "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "BHARTIARTL", 
+            "SBIN", "TATAMOTORS", "LT", "ITC", "AXISBANK", "MARUTI", "BAJFINANCE",
+            "SUNPHARMA", "TITAN", "ULTRACEMCO", "WIPRO", "POWERGRID", "NTPC", "M&M"
+        ]
+
 def fetch_fii_dii_activity():
-    """Fetches real-time institutional activity estimates via public feed."""
     url = "https://www.moneycontrol.com/stocks/fii_dii_activity.php"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -70,11 +78,7 @@ def fetch_fii_dii_activity():
         "Market Implication": ["Index Call Support", "Cash Delivery Support"]
     })
 
-# ==============================================================================
-# 3. NEWS SENTIMENT (NLP)
-# ==============================================================================
 def fetch_news_sentiment(query):
-    """Extracts polarity from Google News RSS feed."""
     encoded_query = urllib.parse.quote(f"{query} share stock news India")
     rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
     feed = feedparser.parse(rss_url)
@@ -85,7 +89,7 @@ def fetch_news_sentiment(query):
     return {"label": label, "score": round(avg_polarity, 2), "headlines": headlines}
 
 # ==============================================================================
-# 4. OPTIONS ACTIVE TRADES & EXIT PERSISTENCE
+# 3. PORTFOLIO PERSISTENCE
 # ==============================================================================
 def load_options_portfolio():
     if os.path.exists(OPTIONS_FILE):
@@ -98,8 +102,22 @@ def load_options_portfolio():
 def save_options_portfolio(df):
     df.to_csv(OPTIONS_FILE, index=False)
 
+def load_equity_portfolio():
+    if os.path.exists(EQUITY_PORTFOLIO_FILE):
+        try:
+            return pd.read_csv(EQUITY_PORTFOLIO_FILE)
+        except Exception:
+            return pd.DataFrame(columns=["Symbol", "Entry_Price", "Target_Price", "Stop_Loss", "Entry_Date"])
+    return pd.DataFrame(columns=["Symbol", "Entry_Price", "Target_Price", "Stop_Loss", "Entry_Date"])
+
+def save_equity_portfolio(df):
+    df.to_csv(EQUITY_PORTFOLIO_FILE, index=False)
+
 if "opt_portfolio" not in st.session_state:
     st.session_state.opt_portfolio = load_options_portfolio()
+
+if "eq_portfolio" not in st.session_state:
+    st.session_state.eq_portfolio = load_equity_portfolio()
 
 INDEX_DICT = {"NIFTY 50": "^NSEI", "BANK NIFTY": "^NSEBANK"}
 FNO_WATCHLIST = [
@@ -117,18 +135,268 @@ st.sidebar.title("⚡ Institutional Suite")
 app_mode = st.sidebar.radio(
     "Select Platform Section:",
     [
-        "1. High-Probability Options Trading & Scanner",
-        "2. Active Options Exit Alert Engine",
-        "3. Institutional FII/DII & Market Sentiment",
-        "4. Equity Swing Investment Desk"
+        "1. Full-Market Equity Scanner & Investment",
+        "2. Active Equity Portfolio & Exit Alerts",
+        "3. High-Probability Options Trading Desk",
+        "4. Active Options Exit Alert Engine",
+        "5. Institutional FII/DII & Market Sentiment"
     ],
     key="app_mode_radio"
 )
 
 # ##############################################################################
-# SECTION 1: HIGH-PROBABILITY OPTIONS TRADING (STOCKS & INDICES)
+# SECTION 1: FULL-MARKET EQUITY SCANNER & INVESTMENT
 # ##############################################################################
-if app_mode == "1. High-Probability Options Trading & Scanner":
+if app_mode == "1. Full-Market Equity Scanner & Investment":
+    st.title("📈 Full-Market Equity Scanner & Swing Investment")
+    st.caption("Scans the liquid NSE universe automatically using multi-indicator confirmation (Volume, EMA, MACD, RSI).")
+
+    tab_scan, tab_single, tab_backtest, tab_sizer = st.tabs([
+        "🚀 Full-Market Scanner",
+        "🔍 Single Stock Deep Dive",
+        "📊 Strategy Backtester",
+        "🧮 Position Size Calculator"
+    ])
+
+    with tab_scan:
+        st.subheader("Automated Market Scanner")
+        st.write("Click below to screen top liquid stocks across the NSE market for high-probability bullish swing setups.")
+
+        if st.button("Run Full-Market Scanner", key="run_mkt_scan_btn"):
+            with st.spinner("Downloading and screening market data for liquid NSE stocks..."):
+                symbols = fetch_nifty_500_tickers()
+                yf_symbols = [f"{s}.NS" for s in symbols]
+                data = yf.download(yf_symbols, period="60d", group_by='ticker', progress=False)
+
+                candidates = []
+                for s in symbols:
+                    t_ns = f"{s}.NS"
+                    if t_ns in data and not data[t_ns].empty:
+                        d = data[t_ns].dropna(subset=['Close', 'Volume'])
+                        if len(d) >= 30:
+                            d['EMA_20'] = calculate_ema(d['Close'], span=20)
+                            d['EMA_50'] = calculate_ema(d['Close'], span=50)
+                            d['SMA_Vol'] = calculate_sma(d['Volume'], window=20)
+                            d['RSI'] = calculate_rsi(d['Close'], window=14)
+                            d['MACD'], d['Signal'], d['Hist'] = calculate_macd(d['Close'])
+
+                            lat = d.iloc[-1]
+                            price = float(lat['Close'])
+                            open_p = float(lat['Open'])
+                            rsi = float(lat['RSI'])
+                            ema20 = float(lat['EMA_20'])
+                            ema50 = float(lat['EMA_50'])
+                            macd = float(lat['MACD'])
+                            sig = float(lat['Signal'])
+                            vol = float(lat['Volume'])
+                            vol_sma = float(lat['SMA_Vol']) if float(lat['SMA_Vol']) > 0 else 1.0
+                            vol_ratio = round(vol / vol_sma, 2)
+
+                            # Strict Bullish Confluence:
+                            # 1. Green Candle (Close > Open)
+                            # 2. Strong Volume Spike (>= 1.2x)
+                            # 3. Uptrend (Price > EMA 20 > EMA 50)
+                            # 4. Momentum (MACD > Signal Line)
+                            # 5. RSI Expansion Corridor (45 <= RSI <= 65)
+                            if (price > open_p) and (vol_ratio >= 1.2) and (price > ema20 > ema50) and (macd > sig) and (45 <= rsi <= 65):
+                                target = round(price * 1.05, 2)
+                                stop_loss = round(price * 0.98, 2)
+                                candidates.append({
+                                    "Symbol": s,
+                                    "Price (₹)": round(price, 2),
+                                    "Green Vol Spike": f"{vol_ratio}x Avg",
+                                    "RSI": round(rsi, 1),
+                                    "MACD": "Bullish Crossover",
+                                    "Target (+5%) (₹)": target,
+                                    "Stop Loss (-2%) (₹)": stop_loss
+                                })
+
+                if candidates:
+                    scan_df = pd.DataFrame(candidates)
+                    st.dataframe(scan_df, use_container_width=True)
+
+                    # Download CSV
+                    csv = scan_df.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Scanner Results CSV",
+                        data=csv,
+                        file_name=f"Market_Scan_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
+
+                    # Add directly to Active Portfolio
+                    st.markdown("---")
+                    st.markdown("#### **Save Selected Stock to Active Portfolio Tracker**")
+                    c_add1, c_add2 = st.columns([3, 1])
+                    selected_stock = c_add1.selectbox("Select stock to track:", [c['Symbol'] for c in candidates], key="sel_cand_stock")
+                    if c_add2.button("Track This Stock", key="track_cand_btn"):
+                        matched = [c for c in candidates if c['Symbol'] == selected_stock][0]
+                        new_trade = pd.DataFrame([{
+                            "Symbol": matched['Symbol'],
+                            "Entry_Price": matched['Price (₹)'],
+                            "Target_Price": matched['Target (+5%) (₹)'],
+                            "Stop_Loss": matched['Stop Loss (-2%) (₹)'],
+                            "Entry_Date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                        }])
+                        st.session_state.eq_portfolio = pd.concat([st.session_state.eq_portfolio, new_trade], ignore_index=True)
+                        save_equity_portfolio(st.session_state.eq_portfolio)
+                        st.success(f"Added {matched['Symbol']} to Section 2 (Active Equity Portfolio)!")
+                else:
+                    st.info("No stocks matched the strict confluence filter today. Market is consolidative; capital is preserved.")
+
+    with tab_single:
+        st.subheader("Single Stock Multi-Factor Analysis")
+        sym_in = st.text_input("Enter NSE Stock Symbol:", value="RELIANCE", key="sym_single_in").upper()
+        if st.button("Analyze Stock", key="btn_single_in"):
+            t = yf.Ticker(f"{sym_in}.NS")
+            df = t.history(period="60d")
+            if not df.empty:
+                df['EMA_20'] = calculate_ema(df['Close'], span=20)
+                df['RSI'] = calculate_rsi(df['Close'], window=14)
+                lat = df.iloc[-1]
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Current Price", f"₹{round(float(lat['Close']), 2)}")
+                c2.metric("RSI (14)", round(float(lat['RSI']), 1))
+                c3.metric("20-Day EMA", f"₹{round(float(lat['EMA_20']), 2)}")
+                st.line_chart(df[['Close', 'EMA_20']].dropna())
+
+    with tab_backtest:
+        st.subheader("1-Year Strategy Historical Performance")
+        bt_sym = st.text_input("NSE Symbol for Backtest:", value="TCS", key="bt_sym_key").upper()
+        if st.button("Run Backtest", key="bt_btn_key"):
+            df = yf.download(f"{bt_sym}.NS", period="1y", interval="1d", progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df['EMA_20'] = calculate_ema(df['Close'], span=20)
+            df['RSI'] = calculate_rsi(df['Close'], window=14)
+            df.dropna(inplace=True)
+
+            cash, pos, entry_p, trades = 100000.0, 0, 0.0, []
+            for date, row in df.iterrows():
+                p, rsi, ema = row['Close'], row['RSI'], row['EMA_20']
+                if pos > 0:
+                    if p >= entry_p * 1.05 or p <= entry_p * 0.98 or rsi > 70:
+                        trades.append((pos * p) - (pos * entry_p))
+                        cash += pos * p
+                        pos = 0
+                elif pos == 0 and rsi < 45 and p > ema:
+                    pos = cash / p
+                    entry_p = p
+                    cash = 0.0
+
+            final_v = cash + (pos * df['Close'].iloc[-1])
+            ret_p = round(((final_v - 100000.0) / 100000.0) * 100, 2)
+            win_r = round((len([t for t in trades if t > 0]) / len(trades) * 100), 1) if trades else 0.0
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Final Value", f"₹{round(final_v, 2)}")
+            c2.metric("Total Return", f"{ret_p}%")
+            c3.metric("Win Rate", f"{win_r}%")
+
+    with tab_sizer:
+        st.subheader("Position Size Calculator")
+        cap = st.number_input("Total Capital (₹):", value=100000.0, key="sz_cap")
+        risk_pct = st.number_input("Max Risk (%):", value=2.0, key="sz_risk")
+        entry_p = st.number_input("Entry Price (₹):", value=2500.0, key="sz_entry")
+        sl_p = st.number_input("Stop Loss Price (₹):", value=2450.0, key="sz_sl")
+        tgt_p = st.number_input("Target Price (₹):", value=2625.0, key="sz_tgt")
+
+        if st.button("Calculate Position", key="sz_btn"):
+            risk_per_sh = entry_p - sl_p
+            if risk_per_sh <= 0:
+                st.error("Entry price must be higher than Stop Loss.")
+            else:
+                max_risk_val = cap * (risk_pct / 100.0)
+                shares = int(min(max_risk_val // risk_per_sh, cap // entry_p))
+                st.success(f"**Recommended Buy Quantity:** {shares} Shares")
+                st.write(f"**Capital Required:** ₹{round(shares * entry_p, 2)}")
+                st.write(f"**Max Loss:** ₹{round(shares * risk_per_sh, 2)}")
+                st.write(f"**Max Gain:** ₹{round(shares * (tgt_p - entry_p), 2)}")
+
+# ##############################################################################
+# SECTION 2: ACTIVE EQUITY PORTFOLIO & EXIT ALERTS
+# ##############################################################################
+elif app_mode == "2. Active Equity Portfolio & Exit Alerts":
+    st.title("🛡️ Active Equity Portfolio & Dynamic Exit Monitor")
+    st.caption("Tracks your open equity swing trades and evaluates real-time prices against Targets, Stops, and Trend Reversals.")
+
+    port_df = st.session_state.eq_portfolio
+
+    with st.expander("➕ Manually Add an Equity Position"):
+        c1, c2, c3, c4 = st.columns(4)
+        m_sym = c1.text_input("NSE Symbol (e.g. RELIANCE, TCS):", key="eq_m_sym").upper()
+        m_entry = c2.number_input("Entry Price (₹):", value=2500.0, key="eq_m_entry")
+        m_target = c3.number_input("Target Price (₹):", value=2625.0, key="eq_m_tgt")
+        m_sl = c4.number_input("Stop Loss (₹):", value=2450.0, key="eq_m_sl")
+        if st.button("Save Equity Position", key="eq_m_save_btn"):
+            if m_sym:
+                new_row = pd.DataFrame([{
+                    "Symbol": m_sym, "Entry_Price": m_entry,
+                    "Target_Price": m_target, "Stop_Loss": m_sl,
+                    "Entry_Date": datetime.now().strftime("%Y-%m-%d %H:%M")
+                }])
+                st.session_state.eq_portfolio = pd.concat([st.session_state.eq_portfolio, new_row], ignore_index=True)
+                save_equity_portfolio(st.session_state.eq_portfolio)
+                st.success(f"Tracking {m_sym}!")
+                st.rerun()
+
+    if port_df.empty:
+        st.info("No active equity trades in portfolio. Run the scanner in Section 1 to find setups.")
+    else:
+        st.subheader("Live Exit Matrix")
+        status_reports = []
+        for index, row in port_df.iterrows():
+            sym = row['Symbol']
+            entry = float(row['Entry_Price'])
+            target = float(row['Target_Price'])
+            sl = float(row['Stop_Loss'])
+
+            try:
+                t = yf.Ticker(f"{sym}.NS")
+                h = t.history(period="15d")
+                if not h.empty:
+                    cur_p = float(h['Close'].iloc[-1])
+                    h['MACD'], h['Signal'], _ = calculate_macd(h['Close'])
+                    cur_macd = float(h['MACD'].iloc[-1])
+                    cur_sig = float(h['Signal'].iloc[-1])
+                    pnl = round(((cur_p - entry) / entry) * 100, 2)
+
+                    if cur_p >= target:
+                        action = "🎯 TAKE PROFIT (Target Hit)"
+                    elif cur_p <= sl:
+                        action = "🛑 STOP LOSS (Exit Immediately)"
+                    elif cur_macd < cur_sig:
+                        action = "⚠️ SELL (Trend Reversal)"
+                    else:
+                        action = "✅ HOLD (Trend Intact)"
+
+                    status_reports.append({
+                        "Symbol": sym,
+                        "Entry (₹)": entry,
+                        "Live Price (₹)": round(cur_p, 2),
+                        "P&L (%)": f"{pnl}%",
+                        "Target (₹)": target,
+                        "Stop Loss (₹)": sl,
+                        "Exit Signal": action
+                    })
+            except Exception:
+                continue
+
+        if status_reports:
+            st.dataframe(pd.DataFrame(status_reports), use_container_width=True)
+
+        st.markdown("---")
+        del_sym = st.selectbox("Select Trade to Remove After Exit:", port_df['Symbol'].tolist(), key="del_eq_sel")
+        if st.button("Remove Trade", key="del_eq_btn"):
+            st.session_state.eq_portfolio = port_df[port_df['Symbol'] != del_sym].reset_index(drop=True)
+            save_equity_portfolio(st.session_state.eq_portfolio)
+            st.success(f"Removed {del_sym} from tracking.")
+            st.rerun()
+
+# ##############################################################################
+# SECTION 3: HIGH-PROBABILITY OPTIONS TRADING DESK
+# ##############################################################################
+elif app_mode == "3. High-Probability Options Trading Desk":
     st.title("🎯 High-Probability Options Trading Desk")
     st.caption("Confluence Strategy: EMA 20/50 + Bollinger Squeeze/Breakout + MACD Histogram + Green Volume")
 
@@ -159,14 +427,12 @@ if app_mode == "1. High-Probability Options Trading & Scanner":
                     ema20, ema50 = float(lat['EMA_20']), float(lat['EMA_50'])
                     rsi = float(lat['RSI'])
                     macd, sig, hist = float(lat['MACD']), float(lat['Signal']), float(lat['Hist'])
-                    bb_up, bb_low = float(lat['BB_Up']), float(lat['BB_Low'])
 
                     sentiment = fetch_news_sentiment(idx_name)
 
                     step = 50 if "NIFTY 50" in idx_name else 100
                     atm_strike = round_strike(price, step=step)
 
-                    # Institutional High-Confluence Rules
                     call_condition = (price > ema20) and (ema20 > ema50) and (rsi >= 55) and (hist > 0) and (sentiment['score'] >= 0)
                     put_condition = (price < ema20) and (ema20 < ema50) and (rsi <= 45) and (hist < 0) and (sentiment['score'] <= 0)
 
@@ -181,13 +447,13 @@ if app_mode == "1. High-Probability Options Trading & Scanner":
                         contract_name = f"{idx_name} {atm_strike} CE"
                         st.success(f"### 🟢 HIGH PROBABILITY CALL SETUP: BUY {contract_name}")
                         st.write(f"**Strike:** ATM {atm_strike} Call (CE)")
-                        st.write(f"**Confluence Alignment:** Spot > EMA 20 > EMA 50, RSI Bullish ({round(rsi, 1)}), Positive MACD Histogram.")
+                        st.write(f"**Confluence:** Spot > EMA 20 > EMA 50, RSI Bullish ({round(rsi, 1)}), Positive MACD Histogram.")
                         st.write(f"**Underlying Stop-Loss:** Exit if spot drops below EMA 20 (₹{round(ema20, 1)})")
                     elif put_condition:
                         contract_name = f"{idx_name} {atm_strike} PE"
                         st.error(f"### 🔴 HIGH PROBABILITY PUT SETUP: BUY {contract_name}")
                         st.write(f"**Strike:** ATM {atm_strike} Put (PE)")
-                        st.write(f"**Confluence Alignment:** Spot < EMA 20 < EMA 50, RSI Bearish ({round(rsi, 1)}), Negative MACD Histogram.")
+                        st.write(f"**Confluence:** Spot < EMA 20 < EMA 50, RSI Bearish ({round(rsi, 1)}), Negative MACD Histogram.")
                         st.write(f"**Underlying Stop-Loss:** Exit if spot climbs above EMA 20 (₹{round(ema20, 1)})")
                     else:
                         st.warning("### ⚠️ NO TRADE SETUP — STAND ASIDE")
@@ -196,7 +462,7 @@ if app_mode == "1. High-Probability Options Trading & Scanner":
     else:
         st.subheader("F&O Stock High-Win-Rate Momentum Scanner")
         if st.button("Scan F&O Universe for Confluence Setups", key="fno_scan_btn"):
-            with st.spinner("Filtering F&O universe with strict 5-factor confluence..."):
+            with st.spinner("Screening F&O universe with strict 5-factor confluence..."):
                 fno_symbols = [f"{s}.NS" for s in FNO_WATCHLIST]
                 data = yf.download(fno_symbols, period="60d", group_by='ticker', progress=False)
 
@@ -224,7 +490,6 @@ if app_mode == "1. High-Probability Options Trading & Scanner":
                             step = 100 if price > 2000 else (50 if price > 500 else 10)
                             strike = round_strike(price, step=step)
 
-                            # Strict Bullish Breakout
                             if (price > open_p) and (price > ema20 > ema50) and (vol_ratio >= 1.3) and (55 <= rsi <= 70) and (hist > 0):
                                 results.append({
                                     "Stock": s,
@@ -235,7 +500,6 @@ if app_mode == "1. High-Probability Options Trading & Scanner":
                                     "Setup": "Institutional Long Breakout",
                                     "Underlying SL (₹)": round(ema20, 2)
                                 })
-                            # Strict Bearish Breakdown
                             elif (price < open_p) and (price < ema20 < ema50) and (vol_ratio >= 1.3) and (30 <= rsi <= 45) and (hist < 0):
                                 results.append({
                                     "Stock": s,
@@ -253,15 +517,14 @@ if app_mode == "1. High-Probability Options Trading & Scanner":
                     st.info("No stocks met the strict institutional criteria right now. Market is in consolidation.")
 
 # ##############################################################################
-# SECTION 2: ACTIVE OPTIONS EXIT ALERT ENGINE
+# SECTION 4: ACTIVE OPTIONS EXIT ALERT ENGINE
 # ##############################################################################
-elif app_mode == "2. Active Options Exit Alert Engine":
+elif app_mode == "4. Active Options Exit Alert Engine":
     st.title("🛡️ Real-Time Options Exit Alert Engine")
     st.caption("Monitors active option positions, tracking target profits (+30%/+60%), stop-loss (-20%), and underlying EMA reversals.")
 
     port_df = st.session_state.opt_portfolio
 
-    # Input Form to Track an Option Trade
     with st.expander("➕ Log an Active Option Trade to Monitor"):
         c1, c2, c3 = st.columns(3)
         c_underlying = c1.selectbox("Underlying Asset:", ["NIFTY", "BANKNIFTY"] + FNO_WATCHLIST, key="log_und")
@@ -274,8 +537,8 @@ elif app_mode == "2. Active Options Exit Alert Engine":
 
         if st.button("Start Tracking Exit Signals", key="log_save_btn"):
             contract_code = f"{c_underlying} {c_strike} {c_type}"
-            target_prem = round(c_entry_prem * 1.30, 2)   # +30% Target
-            sl_prem = round(c_entry_prem * 0.80, 2)       # -20% Stop Loss
+            target_prem = round(c_entry_prem * 1.30, 2)
+            sl_prem = round(c_entry_prem * 0.80, 2)
 
             new_trade = pd.DataFrame([{
                 "Contract": contract_code,
@@ -307,7 +570,6 @@ elif app_mode == "2. Active Options Exit Alert Engine":
             sl_prem = float(row['Stop_Loss_Premium'])
             und_sl = float(row['Underlying_SL'])
 
-            # Determine ticker symbol
             ticker_map = {"NIFTY": "^NSEI", "BANKNIFTY": "^NSEBANK"}
             query_ticker = ticker_map.get(und, f"{und}.NS")
 
@@ -319,7 +581,6 @@ elif app_mode == "2. Active Options Exit Alert Engine":
                     h['EMA_20'] = calculate_ema(h['Close'], span=20)
                     ema20 = float(h['EMA_20'].iloc[-1])
 
-                    # Exit Rule Evaluation
                     if op_type == "CE" and cur_spot <= und_sl:
                         status = "🛑 EXIT NOW: Underlying SL Breached"
                     elif op_type == "PE" and cur_spot >= und_sl:
@@ -355,9 +616,9 @@ elif app_mode == "2. Active Options Exit Alert Engine":
             st.rerun()
 
 # ##############################################################################
-# SECTION 3: FII / DII INSTITUTIONAL SENTIMENT
+# SECTION 5: INSTITUTIONAL FII/DII & MARKET SENTIMENT
 # ##############################################################################
-elif app_mode == "3. Institutional FII/DII & Market Sentiment":
+elif app_mode == "5. Institutional FII/DII & Market Sentiment":
     st.title("🏛️ Institutional Activity & Market Sentiment")
     st.caption("Foreign & Domestic Institutional Investors drive large-scale liquidity trends.")
 
@@ -376,20 +637,3 @@ elif app_mode == "3. Institutional FII/DII & Market Sentiment":
             st.write("#### Recent Major Headlines:")
             for h in res['headlines']:
                 st.write(f"- {h}")
-
-# ##############################################################################
-# SECTION 4: EQUITY SWING INVESTMENT DESK
-# ##############################################################################
-elif app_mode == "4. Equity Swing Investment Desk":
-    st.title("📈 Equity Swing Investment Desk")
-    eq_sym = st.text_input("Enter NSE Stock Symbol:", value="RELIANCE", key="eq_sym_in").upper()
-    if st.button("Evaluate Stock", key="eq_btn"):
-        t = yf.Ticker(f"{eq_sym}.NS")
-        df = t.history(period="60d")
-        if not df.empty:
-            df['EMA_20'] = calculate_ema(df['Close'], span=20)
-            df['RSI'] = calculate_rsi(df['Close'], window=14)
-            lat = df.iloc[-1]
-            st.metric("Price", f"₹{round(float(lat['Close']), 2)}")
-            st.metric("RSI (14)", round(float(lat['RSI']), 2))
-            st.line_chart(df[['Close', 'EMA_20']].dropna())
